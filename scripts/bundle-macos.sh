@@ -2,6 +2,9 @@
 # Builds target/release/bundle/TimerShift.app.
 # macOS only delivers notifications for real app bundles, so use this rather
 # than the bare binary for everyday use.
+#
+# --universal builds one binary for both Apple Silicon and Intel Macs (used for
+# releases); it needs `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,17 +13,28 @@ BUNDLE_ID=com.timershift.TimerShift # keep in sync with src/notify.rs
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 APP=target/release/bundle/$APP_NAME.app
 
-cargo build --release
+if [[ "${1:-}" == "--universal" ]]; then
+  cargo build --release --target aarch64-apple-darwin
+  cargo build --release --target x86_64-apple-darwin
+  BIN=target/universal/timershift
+  mkdir -p "$(dirname "$BIN")"
+  lipo -create -output "$BIN" \
+    target/aarch64-apple-darwin/release/timershift \
+    target/x86_64-apple-darwin/release/timershift
+else
+  cargo build --release
+  BIN=target/release/timershift
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/timershift "$APP/Contents/MacOS/timershift"
+cp "$BIN" "$APP/Contents/MacOS/timershift"
 
 # Render the app's own icon at 1024px and let iconutil turn it into an .icns.
 ICONSET=$(mktemp -d)/AppIcon.iconset
 mkdir -p "$ICONSET"
 BIG="$ICONSET/icon_512x512@2x.png"
-target/release/timershift --write-icon "$BIG"
+"$BIN" --write-icon "$BIG"
 for size in 16 32 128 256; do
   sips -z $size $size "$BIG" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
   sips -z $((size * 2)) $((size * 2)) "$BIG" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null

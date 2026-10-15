@@ -16,7 +16,28 @@ A small work/break interval timer for the desktop, written in Rust with
 Only time spent in a *running work period* counts towards your hours. Paused time,
 breaks and time while the computer is asleep do not.
 
-## Run it
+## Download
+
+Get the latest version from the [releases page](https://github.com/junakowicz/timershift/releases/latest):
+
+- **macOS** (Apple Silicon and Intel): [TimerShift-macos-universal.zip](https://github.com/junakowicz/timershift/releases/latest/download/TimerShift-macos-universal.zip).
+  Unzip it and drag TimerShift.app into Applications. The app isn't notarized,
+  so macOS blocks the first launch: click **Open Anyway** in System Settings ›
+  Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/TimerShift.app`.
+- **Windows**: [TimerShift-windows-x86_64.zip](https://github.com/junakowicz/timershift/releases/latest/download/TimerShift-windows-x86_64.zip)
+- **Linux**: [TimerShift-linux-x86_64.tar.gz](https://github.com/junakowicz/timershift/releases/latest/download/TimerShift-linux-x86_64.tar.gz)
+
+## Releasing
+
+Bump `version` in `Cargo.toml`, commit, then push a matching tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+GitHub Actions builds all three platforms and publishes the release.
+
+## Build from source
 
 You need a Rust toolchain ([rustup](https://rustup.rs)).
 

@@ -1,0 +1,87 @@
+# Builds and tests on every push to main. Pushing a tag like v0.1.0 also
+# publishes a GitHub release with the macOS, Windows and Linux downloads.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable && rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: cargo test
+      - run: ./scripts/bundle-macos.sh --universal
+      # ditto keeps the bundle's code signature intact; plain zip can break it.
+      - run: ditto -c -k --keepParent target/release/bundle/TimerShift.app TimerShift-macos-universal.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: TimerShift-macos-universal.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable
+      - run: cargo test
+      - run: cargo build --release
+      - shell: pwsh
+        run: |
+          Copy-Item target/release/timershift.exe TimerShift.exe
+          Compress-Archive -Path TimerShift.exe -DestinationPath TimerShift-windows-x86_64.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: TimerShift-windows-x86_64.zip
+
+  linux:
+    # The oldest supported image, so the binary runs on older glibc versions too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - run: rustup update stable
+      - run: cargo test
+      - run: cargo build --release
+      - run: tar -czf TimerShift-linux-x86_64.tar.gz -C target/release timershift
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: TimerShift-linux-x86_64.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches the version in Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --title "TimerShift $GITHUB_REF_NAME" --notes-file .github/release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
