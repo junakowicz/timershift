@@ -6,7 +6,7 @@
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -155,6 +155,10 @@ struct Blink {
 pub struct TimerApp {
     shared: Arc<Shared>,
     tray: Option<tray::Tray>,
+    /// Picked from the tray menu; handled in `logic` on the main thread.
+    tray_actions: mpsc::Receiver<tray::Action>,
+    /// Set by the tray's Quit, so that closing isn't turned into hiding.
+    quitting: bool,
     blink: Option<Blink>,
     /// Clock for the pulse animation.
     started: Instant,
@@ -181,20 +185,12 @@ impl TimerApp {
 
         let started = Instant::now();
         let view = tray_view(&shared.engine(), started, None, 0.0);
+        let (sender, tray_actions) = mpsc::channel();
         let tray = tray::Tray::new(view, {
-            let shared = Arc::clone(&shared);
             let ctx = cc.egui_ctx.clone();
             move |action| {
-                match action {
-                    tray::Action::Toggle => shared.engine().toggle(Instant::now(), today()),
-                    tray::Action::Skip => shared.engine().skip(Instant::now(), today()),
-                    tray::Action::Open => {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    }
-                    tray::Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                }
+                let _ = sender.send(action);
+                // Runs `logic` even while the window is hidden.
                 ctx.request_repaint();
             }
         });
@@ -202,6 +198,8 @@ impl TimerApp {
         Self {
             shared,
             tray,
+            tray_actions,
+            quitting: false,
             blink: None,
             started,
             tab: Tab::Timer,
@@ -210,10 +208,46 @@ impl TimerApp {
     }
 }
 
+impl TimerApp {
+    fn handle_tray_action(&mut self, ctx: &egui::Context, action: tray::Action, now: Instant) {
+        match action {
+            tray::Action::Toggle => self.shared.engine().toggle(now, today()),
+            tray::Action::Skip => self.shared.engine().skip(now, today()),
+            tray::Action::Open => show_window(ctx),
+            tray::Action::Quit => {
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+}
+
+fn hide_window(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    tray::set_in_dock(false);
+}
+
+fn show_window(ctx: &egui::Context) {
+    tray::set_in_dock(true);
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
 impl eframe::App for TimerApp {
     /// Runs before every frame, and also while the window is hidden or minimised.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Instant::now();
+        let actions: Vec<_> = self.tray_actions.try_iter().collect();
+        for action in actions {
+            self.handle_tray_action(ctx, action, now);
+        }
+        // With a tray icon to come back to, closing the window just hides it.
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.quitting {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            hide_window(ctx);
+        }
+
         let engine = self.shared.engine();
         if self.shared.attention.swap(false, Ordering::Relaxed) {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
@@ -248,6 +282,11 @@ impl eframe::App for TimerApp {
         let shared = Arc::clone(&self.shared);
         let ctx = ui.ctx().clone();
         let now = Instant::now();
+        // ⌘W (Ctrl+W on Windows) closes the window like its close button.
+        let close_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::W);
+        if self.tray.is_some() && ui.input_mut(|i| i.consume_shortcut(&close_shortcut)) {
+            hide_window(&ctx);
+        }
         let mut engine = shared.engine();
 
         egui::Panel::top("tabs").show(ui, |ui| {

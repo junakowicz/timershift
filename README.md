@@ -12,6 +12,8 @@ A small work/break interval timer for the desktop, written in Rust with
   a red ring filling up during work, green with a pulsing dot during a break,
   and 30 seconds of blinking when a period ends. Click it for Start/Pause, Skip,
   Open and Quit. Optionally shows the remaining time next to the icon (macOS)
+- Closing the window (or ⌘W) keeps TimerShift running in the menu bar, out of
+  the Dock; reopen it from the icon's menu. Quit from that menu or with ⌘Q
 
 Only time spent in a *running work period* counts towards your hours. Paused time,
 breaks and time while the computer is asleep do not.

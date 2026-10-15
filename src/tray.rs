@@ -32,6 +32,23 @@ pub struct View {
 
 pub use imp::Tray;
 
+/// Shows or hides TimerShift in the Dock and the app switcher (macOS), so a
+/// closed window leaves only the menu bar icon. Call on the main thread.
+pub fn set_in_dock(visible: bool) {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+        let policy = if visible {
+            NSApplicationActivationPolicy::Regular
+        } else {
+            NSApplicationActivationPolicy::Accessory
+        };
+        NSApplication::sharedApplication(mtm).setActivationPolicy(policy);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = visible;
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
     use std::sync::Arc;
